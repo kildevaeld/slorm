@@ -13,9 +13,11 @@ class Person extends slorm.Model {
 
   @slorm.primaryKey
   int id;
-  @slorm.field
+  @slorm.column
   String name;
-  Person();
+
+  @slorm.hasMany
+  List<Blog> blogs;
 }
 
 @slorm.table
@@ -24,7 +26,7 @@ class Blog extends slorm.Model {
 
   @slorm.primaryKey
   int id;
-  @slorm.field
+  @slorm.column
   String title;
   @slorm.belongsTo
   Person person;
@@ -77,16 +79,34 @@ class _MyAppState extends State<MyApp> {
                 initializeReflectable();
 
                 var persons = await slorm.Collection.open<Person>("demo.db");
-                var blogs = await slorm.Collection.open<Blog>("demo.db");
-                var person = Person()..name = "Test Mig";
-                //person = await persons.create(person);
-                // print("${blogs.description.createTableStatement()}");
-                // await blogs.create(Blog()
-                //   ..title = "A Blog title"
-                //   ..person = person);
+                print("persons ${persons.description}");
 
-                blogs.findAll();
+                persons.findAll();
+                // var blogs = await slorm.Collection.open<Blog>("demo.db");
+                // var person = Person()..name = "Test Mig";
+                // //person = await persons.create(person);
+                // // print("${blogs.description.createTableStatement()}");
+                // // await blogs.create(Blog()
+                // //   ..title = "A Blog title"
+                // //   ..person = person);
+                // Stopwatch stopwatch = new Stopwatch()..start();
+                // var data = await blogs.findAll();
+                // print(
+                //     'doSomething() executed in ${stopwatch.elapsed.inMilliseconds}');
 
+                // for (var r in data) {
+                //   print(
+                //       "name ${r.title}, id: ${r.id} ${r.person.id} ${r.person.name}");
+                // }
+
+                // var listOfPersons = await persons.findAll();
+
+                // for (var p in listOfPersons) {
+                //   print("name ${p.name}: ");
+                //   for (var b in p.blogs) {
+                //     print("  blog: ${b.title}");
+                //   }
+                // }
                 // var person =
                 //     await collection.create(Person()..name = "Test Mig");
 

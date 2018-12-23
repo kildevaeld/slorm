@@ -4,6 +4,7 @@ import './descriptions.dart';
 import 'package:sqflite/sqflite.dart' as sqlite;
 import 'package:path/path.dart' as Path;
 import 'package:reflectable/reflectable.dart';
+import './errors.dart';
 
 typedef Map<String, dynamic> Serializer<M extends Model>(M model);
 typedef M Deserializer<M extends Model>(Map<String, dynamic> map);
@@ -80,16 +81,8 @@ class Collection<M extends Model> {
 
   Future<List<M>> findAll(
       {String where, List<dynamic> whereArgs, int limit}) async {
-    // final columns = _desc.columns.map((m) => m.columnName).toList();
-
-    // final results = await _database.query(_desc.tableName,
-    //     columns: columns, where: where, whereArgs: whereArgs, limit: limit);
-
-    // return results.map(_deserializer).toList();
     var rows = await _database.rawQuery(_desc.findRowsStmt());
-    print("sql ${_desc.findRowsStmt()}");
-    print("rows $rows");
-    return List<M>();
+    return rows.map((m) => description.convert(m) as M).toList();
   }
 
   Future<M> find(dynamic id) async {

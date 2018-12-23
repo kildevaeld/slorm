@@ -100,8 +100,10 @@ class ModelDescription {
       if (col.primaryKey) {
         return '"${col.columnName}" INTEGER PRIMARY KEY AUTOINCREMENT';
       }
+      if (col.sqlType == null) return null;
+
       return '"${col.columnName}" ${col.sqlType.sqlString}';
-    });
+    }).where((m) => m != null);
 
     return 'CREATE TABLE IF NOT EXISTS "$tableName" (${cols.join(', ')});';
   }
@@ -125,18 +127,55 @@ class ModelDescription {
 
         col.target.columns.forEach((subcol) {
           cols.add(
-              '${col.target.tableName}.${subcol.columnName} as "${col.target.tableName}.${subcol.columnName}"');
+              '${col.target.tableName}.${subcol.columnName} as "$tableName.${col.target.tableName}.${subcol.columnName}"');
         });
 
         return;
+      } else if (col is HasManyDescription) {
+      } else {
+        cols.add(
+            '$tableName.${col.columnName} as "$tableName.${col.columnName}"');
       }
-      cols.add(
-          '$tableName.${col.columnName} as "$tableName.${col.columnName}"');
     });
 
     var out = ['SELECT ${cols.join(', ')} FROM $tableName'];
     if (joins.isNotEmpty) out.add(joins.join(' '));
     return out.join(' ');
+  }
+
+  Object convert(Map<String, dynamic> map) {
+    var model = this.mirror.newInstance("", []);
+    var mirror = table.reflect(model);
+
+    var relations = Map<String, dynamic>();
+
+    map.forEach((k, v) {
+      var splitted = k.split(".");
+      if (splitted.length > 2) {
+        if (!relations.containsKey(splitted[1])) {
+          relations[splitted[1]] = Map<String, dynamic>();
+        }
+        relations[splitted[1]][splitted.skip(1).join('.')] = v;
+      } else if (splitted[0] == tableName) {
+        mirror.invokeSetter(splitted[1], v);
+      } else {
+        throw SlormException(
+            'invalid tableName "${splitted[0]}", expected "$tableName"');
+      }
+    });
+
+    relations.forEach((k, v) {
+      var desc = columns.firstWhere((col) {
+        if (col is ForeignColumnDesc) {
+          return col.target.tableName == k;
+        }
+        return false;
+      });
+      var targetModel = (desc as ForeignColumnDesc).target.convert(v);
+      mirror.invokeSetter(desc.mirror.simpleName, targetModel);
+    });
+
+    return model;
   }
 
   List<String> get columnNames => columns.map((c) => c.columnName).toList();
@@ -147,12 +186,13 @@ class ModelDescription {
     return fromTypeMirror(mirror);
   }
 
-  static ModelDescription fromTypeMirror(ClassMirror mirror) {
+  static ModelDescription fromTypeMirror(ClassMirror mirror,
+      {bool follow: true}) {
     List<ColumnDesc> columns = [];
     mirror.declarations.forEach((name, method) {
-      Field field;
+      Column field;
       for (var meta in method.metadata) {
-        if (meta is Field && method is VariableMirror) {
+        if (meta is Column && method is VariableMirror) {
           field = meta;
           break;
         }
@@ -161,13 +201,38 @@ class ModelDescription {
 
       var columnName = field.name ?? method.simpleName;
       if (field is BelongsTo) {
-        var mirror = fromTypeMirror((method as VariableMirror).type);
+        if (!follow) return;
+
+        var mirror =
+            fromTypeMirror((method as VariableMirror).type, follow: false);
         if (field.name != null) {
           columnName = columnName;
         } else {
           columnName = mirror.tableName + "_id";
         }
         columns.add(BelongsToDescription(columnName, method, mirror));
+      } else if (field is HasMany) {
+        if (!follow) return;
+
+        var varMir = (method as VariableMirror);
+
+        if (varMir.type.simpleName != "List") {
+          throw FieldException("should be a list");
+        }
+
+        if (varMir.type.typeArguments.length != 1) {
+          throw FieldException("should have inner");
+        }
+
+        var inner = varMir.type.typeArguments[0];
+        var modelSub = table.reflectType(Model);
+        if (!inner.isSubtypeOf(modelSub)) {
+          throw FieldException("type argument is not a subclas of a model");
+        }
+
+        var mirror = fromTypeMirror(inner, follow: false);
+
+        columns.add(HasManyDescription(columnName, varMir, mirror));
       } else {
         columns.add(ColumnDescription(columnName, method, field.primaryKey));
       }
@@ -198,6 +263,9 @@ abstract class ColumnDesc {
   SqlType sqlType;
   ColumnDesc(this.columnName, this.mirror, this.primaryKey) {
     sqlType = _toSqlTypeFromVar(this.mirror);
+    // if (sqlType == null) {
+    //   throw SlormException("sql type wass null");
+    // }
   }
 
   void setValue(InstanceMirror instance, dynamic value) {
@@ -212,7 +280,7 @@ abstract class ColumnDesc {
       "type": this.runtimeType.toString(),
       "columnName": columnName,
       "primaryKey": primaryKey,
-      "sqlType": sqlType.sqlString,
+      "sqlType": sqlType != null ? sqlType.sqlString : "",
       "dartType": mirror.reflectedType.toString(),
     };
   }
@@ -221,9 +289,7 @@ abstract class ColumnDesc {
 abstract class ForeignColumnDesc extends ColumnDesc {
   ModelDescription target;
   ForeignColumnDesc(String columnName, VariableMirror mirror, this.target)
-      : super(columnName, mirror, false) {
-    this.sqlType = SqlIntegerType();
-  }
+      : super(columnName, mirror, false);
 }
 
 class ColumnDescription extends ColumnDesc {
@@ -234,7 +300,9 @@ class ColumnDescription extends ColumnDesc {
 class BelongsToDescription extends ForeignColumnDesc {
   BelongsToDescription(
       String columnName, VariableMirror mirror, ModelDescription target)
-      : super(columnName, mirror, target);
+      : super(columnName, mirror, target) {
+    this.sqlType = SqlIntegerType();
+  }
 
   void setValue(InstanceMirror instance, dynamic value) {
     instance.invokeSetter(mirror.simpleName, value);
@@ -248,4 +316,10 @@ class BelongsToDescription extends ForeignColumnDesc {
     var id = m.invokeGetter(idName);
     return id;
   }
+}
+
+class HasManyDescription extends ForeignColumnDesc {
+  HasManyDescription(
+      String columnName, VariableMirror mirror, ModelDescription target)
+      : super(columnName, mirror, target);
 }
